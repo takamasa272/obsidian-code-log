@@ -1,99 +1,144 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import {
+	type App,
+	type MarkdownPostProcessorContext,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	loadPrism,
+} from "obsidian";
+// import {DEFAULT_SETTINGS, CodeLogLineHighlighterSettings, SampleSettingTab} from "./settings";
+import { DEFAULT_SETTINGS, CodeLogLineHighlighterSettings } from "./settings";
 
-// Remember to rename these classes and interfaces!
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
-
+export default class CodeLogLineHighlighter extends Plugin {
+	settings: CodeLogLineHighlighterSettings;
 	async onload() {
-		await this.loadSettings();
+		console.log("CodeLogLineHighlighter Plugin loaded.");
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+		this.registerMarkdownPostProcessor((element: HTMLElement, context) => {
+			const codeBlocks = element.querySelectorAll(
+				"pre.language-log code, code.language-log",
+			);
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+			codeBlocks.forEach((codeBlock: HTMLElement) => {
+				const lines = codeBlock.textContent
+					? codeBlock.textContent.split("\n")
+					: [];
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
+				codeBlock.innerHTML = "";
+
+				lines.forEach((lineText, index) => {
+					const lineSpan = codeBlock.createEl("span", {
+						text: lineText,
+					});
+					lineSpan.style.display = "block"; // 各行をブロック要素として表示
+
+					let maxConsecutiveLessThanCount = 0;
+					const consecutiveMatches = lineText.match(/<+/g); // 1つ以上の '<' が連続するパターンをすべて検索
+
+					if (consecutiveMatches) {
+						for (const match of consecutiveMatches) {
+							if (match.length > maxConsecutiveLessThanCount) {
+								maxConsecutiveLessThanCount = match.length;
+							}
+						}
 					}
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
+					if (maxConsecutiveLessThanCount >= 2) {
+						let color: string;
+						// 2個:赤, 3個:青, 4個:緑, 5個:赤, ... と3色を繰り返し
+						const colorIndex =
+							(maxConsecutiveLessThanCount - 2) % 3;
+
+						switch (colorIndex) {
+							case 0:
+								color = "red";
+								break;
+							case 1:
+								color = "blue";
+								break;
+							case 2:
+								color = "green";
+								break;
+							default:
+								color = "black"; // デフォルト色（到達しないはず）
+								break;
+						}
+						lineSpan.style.color = color;
+					}
+				});
+			});
 		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
 	}
 
-	onunload() {
+	async onunload() {
+		console.log("CodeLogLineHighlighter Plugin unloaded."); // ログメッセージも変更
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData(),
+		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		// this.applyDynamicStyles(); // Apply styles after saving new settings
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+class CodeLogLineHighlighterSettingTab extends PluginSettingTab {
+	plugin: CodeLogLineHighlighter;
+
+	constructor(app: App, plugin: CodeLogLineHighlighter) {
+		super(app, plugin);
+		this.plugin = plugin;
 	}
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+		containerEl.createEl("h2", { text: "CodeLogLineHighlighter Settings" });
+
+		new Setting(containerEl)
+			.setName("Highlight color 1")
+			.setDesc("Set font color of highlighted line")
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_SETTINGS.highlightColor1)
+					.setValue(this.plugin.settings.highlightColor1)
+					.onChange(async (value) => {
+						this.plugin.settings.highlightColor1 = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Highlight color 2")
+			.setDesc("Set font color of highlighted line")
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_SETTINGS.highlightColor2)
+					.setValue(this.plugin.settings.highlightColor2)
+					.onChange(async (value) => {
+						this.plugin.settings.highlightColor2 = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Highlight color 3")
+			.setDesc("Set font color of highlighted line")
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_SETTINGS.highlightColor3)
+					.setValue(this.plugin.settings.highlightColor3)
+					.onChange(async (value) => {
+						this.plugin.settings.highlightColor3 = value;
+						await this.plugin.saveSettings();
+					}),
+			);
 	}
 }
